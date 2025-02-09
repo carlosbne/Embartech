@@ -334,12 +334,15 @@ int main()
             case 12:
                 J_EXIT = false;  // Garante que a variável está resetada antes de chamar a função
                 led_control();
+                sleep_ms(150);
                 break;
             case 24:
                 play_melody();
+                sleep_ms(150);
                 break;
             case 36:
                 fade_led();
+                sleep_ms(150);
                 break;
             default:
                 break;

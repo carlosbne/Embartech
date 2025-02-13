@@ -5,9 +5,13 @@
 #include "ssd1306.h"
 #include "hardware/adc.h"
 #include "hardware/pwm.h"
+#include "hardware/pio.h"
 #include "hardware/gpio.h"
-#include "hardware/timer.h"
+/* #include "hardware/timer.h" */
 #include "hardware/clocks.h"
+
+// Biblioteca gerada pelo arquivo .pio durante compilação.
+#include "ws2818b.pio.h"
 
 //Definição dos Pinos
 /* #define I2C_PORT i2c1  //pinos e módulos controlador i2c selecionado
@@ -17,6 +21,10 @@
 #define SW 22          // Botão do Joystick
 #define VRX 26         // Pino ADC do eixo X do joystick
 #define VRY 27         // Pino ADC do eixo Y do joystick
+
+// Definição do número de LEDs e pino
+#define LED_COUNT 25
+#define LED_PIN 7
 
 const int ADC_CHANNEL_0 = 0; // Canal ADC para o eixo X
 const int ADC_CHANNEL_1 = 1; // Canal ADC para o eixo Y
@@ -36,6 +44,98 @@ const uint GREEN_LED_PIN = 11;  // LED verde no GPIO 11
 #define LED_AZUL_SLICE pwm_gpio_to_slice_num(BLUE_LED_PIN)
 #define LED_AZUL_CANAL pwm_gpio_to_channel(BLUE_LED_PIN)
 
+//parte do código retirado de https://github.com/BitDogLab/BitDogLab-C/tree/main/neopixel_pio
+// Definição de pixel GRB
+struct pixel_t {
+    uint8_t G, R, B; // Três valores de 8-bits, cada um, compõem um pixel.
+};
+
+typedef struct pixel_t pixel_t;
+typedef pixel_t npLED_t; // Mudança de nome de "struct pixel_t" para "npLED_t", por clareza.
+
+// Declaração do buffer de pixels que formam a matriz.
+npLED_t leds[LED_COUNT];
+
+// Variáveis para uso da máquina PIO.
+PIO np_pio;
+uint sm;
+float brightness = 1.0; // Variável de controle de brilho (0.0 a 1.0)
+
+/**
+* Inicializa a máquina PIO para controle da matriz de LEDs.
+*/
+void npInit(uint pin) {
+    // Cria programa PIO.
+    uint offset = pio_add_program(pio0, &ws2818b_program);
+    np_pio = pio0;
+    // Toma posse de uma máquina PIO.
+    sm = pio_claim_unused_sm(np_pio, false);
+    if (sm < 0) {
+        np_pio = pio1;
+        sm = pio_claim_unused_sm(np_pio, true); // Se nenhuma máquina estiver livre, panic!
+    }
+    // Inicia programa na máquina PIO obtida.
+    ws2818b_program_init(np_pio, sm, offset, pin, 800000.f);
+    // Limpa buffer de pixels.
+    for (uint i = 0; i < LED_COUNT; ++i) {
+    leds[i].R = 0;
+    leds[i].G = 0;
+    leds[i].B = 0;
+    }
+}
+
+/**
+ * Define o brilho da matriz sem alterar as cores.
+ */
+void SetBrightness(float b) {
+    if (b < 0.0) b = 0.0;
+    if (b > 1.0) b = 1.0;
+    brightness = b;
+}
+
+/**
+* Atribui uma cor RGB a um LED.
+*/
+void npSetLED(const uint index, const uint8_t r, const uint8_t g, const uint8_t b) {
+    leds[index].R = (uint8_t)(r * brightness);
+    leds[index].G = (uint8_t)(g * brightness);
+    leds[index].B = (uint8_t)(b * brightness);
+   }
+
+
+/**
+* Escreve os dados do buffer nos LEDs.
+*/
+void npWrite() {
+    for (uint i = 0; i < LED_COUNT; ++i) {
+        uint8_t r = (uint8_t)(leds[i].R * brightness);
+        uint8_t g = (uint8_t)(leds[i].G * brightness);
+        uint8_t b = (uint8_t)(leds[i].B * brightness);
+        pio_sm_put_blocking(np_pio, sm, g);
+        pio_sm_put_blocking(np_pio, sm, r);
+        pio_sm_put_blocking(np_pio, sm, b);
+    }
+}
+/**
+* Limpa o buffer de pixels.
+*/
+void npClear() {
+    for (uint i = 0; i < LED_COUNT; ++i)
+      npSetLED(i, 0, 0, 0);
+   }
+   
+
+void setupLEDs() {
+    SetBrightness(0.1); // Ajusta o brilho para 50%
+    npInit(LED_PIN);
+    npClear();
+    npSetLED(22, 255, 255, 0);
+    npWrite();
+}
+
+// ------------- Configutações PWM -------------
+const float DIVIDER_PWM = 16.0; // divisor de clock para o PWM
+const uint16_t PERIOD_PWM = 65535;   // período do PWM (16 bits)
 
 //ssd1306_t disp; 
 //volatile bool J_EXIT = false;  // variável para indicar saída da função
@@ -80,10 +180,6 @@ void inicializa(){
     gpio_set_dir(SW, GPIO_IN); // config o pino do botão como entrada
     gpio_pull_up(SW);
 }
-
-// -------- Configutações PWM -------------
-const float DIVIDER_PWM = 16.0; // divisor de clock para o PWM
-const uint16_t PERIOD_PWM = 65535;   // período do PWM (valor máximo para duty_u16)
 
 
 //-------------- Função -------------------
@@ -133,29 +229,26 @@ void led(uint8_t r, uint8_t g, uint8_t b) {
 
 
 
-
-
 int main()
 {
     inicializa();
     setup_pwm_LED();
-    // Aguarda o console USB estar pronto
-     while (!stdio_usb_connected()) {
-        tight_loop_contents();
-    }
+    // Inicializa matriz de LEDs
+    setupLEDs();
+    
     // Testar a saída
     printf("Programa LED RGB e Joystick para Raspberry Pi Pico W em C\n");
-    adc_select_input(ADC_CHANNEL_0); // Seleciona a entrada ADC para VRX
-    adc_select_input(ADC_CHANNEL_1); // Seleciona a entrada ADC para VRY    
 
     while(1){
-        // Leitura dos valores analógicos do joystick
+        
+        // leitura dos valores analógicos do joystick
+        adc_select_input(ADC_CHANNEL_0);
         uint16_t adc_x_raw = adc_read();
-        adc_select_input(ADC_CHANNEL_1); // Muda para ler o canal Y
-        uint16_t adc_y_raw = adc_read();
-        adc_select_input(ADC_CHANNEL_0); // Retorna para o canal X para a próxima leitura
 
-        // Botão do joystick
+        adc_select_input(ADC_CHANNEL_1);
+        uint16_t adc_y_raw = adc_read();
+
+        // botão do joystick 
         bool button_state = !gpio_get(SW); // Botão é normalmente pull-up, então !gpio_get() inverte para lógica ativa alta
 
         // Normaliza os valores do joystick para o intervalo 0-255 (para controle do LED RGB)

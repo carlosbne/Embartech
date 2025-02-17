@@ -1,3 +1,5 @@
+/* https://github.com/carlosbne/Embartech/tree/main/pico/projetoFinal */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "hardware/pio.h"
@@ -168,7 +170,6 @@ void npWrite() {
 }
 //-------- Fim Matriz ------------
 
-//------- Conexão Wi-fi Com ThingSpeak ---------
 
 
 // função de inicialização
